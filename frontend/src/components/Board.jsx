@@ -7,7 +7,6 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { useState } from "react";
-import { COLUMNS } from "../constants";
 import { useCards } from "../hooks/useCards";
 import { formatDueDate, priorityLabel } from "../utils/cardUtils";
 import { Column } from "./Column";
@@ -16,13 +15,15 @@ import { ErrorBanner } from "./ErrorBanner";
 export function Board() {
   const {
     cards,
+    columns,
+    isLoading,
+    error,
     cardsInColumn,
     addCard,
     updateCard,
     deleteCard,
     moveCard,
     sortColumn,
-    saveError,
   } = useCards();
   const [activeId, setActiveId] = useState(null);
 
@@ -44,7 +45,7 @@ export function Board() {
     const activeCardData = cards.find((c) => c.id === active.id);
     if (!activeCardData) return;
 
-    const isColumnTarget = COLUMNS.some((c) => c.id === over.id);
+    const isColumnTarget = columns.some((c) => c.id === over.id);
     const destColumnId = isColumnTarget
       ? over.id
       : cards.find((c) => c.id === over.id)?.columnId;
@@ -71,6 +72,10 @@ export function Board() {
     moveCard(active.id, destColumnId, destIndex);
   }
 
+  if (isLoading) {
+    return <p className="board-status">読み込み中...</p>;
+  }
+
   return (
     <DndContext
       sensors={sensors}
@@ -79,9 +84,9 @@ export function Board() {
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <ErrorBanner message={saveError} />
+      <ErrorBanner message={error} />
       <main className="board">
-        {COLUMNS.map((column) => (
+        {columns.map((column) => (
           <Column
             key={column.id}
             column={column}
