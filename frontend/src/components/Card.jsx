@@ -59,7 +59,9 @@ export function Card({ card, columns, onUpdate, onDelete }) {
         title="削除"
         onClick={(e) => {
           e.stopPropagation();
-          onDelete(card.id);
+          if (window.confirm(`「${card.title}」を削除しますか？この操作は取り消せません。`)) {
+            onDelete(card.id);
+          }
         }}
       >
         ×
