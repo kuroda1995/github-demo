@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>タスク管理アプリ（モック）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>タスク管理アプリ</h1>
+  </header>
+
+  <div class="error-banner" id="error-banner"></div>
+
+  <main class="board" id="board">
+    <!-- 列（カラム）は script.js が動的に描画する -->
+  </main>
+
+  <template id="card-template">
+    <div class="card" draggable="true">
+      <div class="card-main">
+        <div class="card-badges">
+          <span class="card-priority"></span>
+          <span class="card-due"></span>
+        </div>
+        <span class="card-title"></span>
+        <p class="card-description"></p>
+      </div>
+      <button class="card-delete" title="削除">×</button>
+    </div>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+</html>
