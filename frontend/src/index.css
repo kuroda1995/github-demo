@@ -331,6 +331,15 @@ body {
   flex: 1;
 }
 
+.cf-status {
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+}
+
 .cf-actions {
   display: flex;
   gap: 8px;

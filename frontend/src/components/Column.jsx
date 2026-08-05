@@ -5,7 +5,7 @@ import { Card } from "./Card";
 import { CardForm } from "./CardForm";
 import { SortControls } from "./SortControls";
 
-export function Column({ column, cards, onAddCard, onUpdateCard, onDeleteCard, onSort }) {
+export function Column({ column, columns, cards, onAddCard, onUpdateCard, onDeleteCard, onSort }) {
   const [isAdding, setIsAdding] = useState(false);
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const cardIds = cards.map((c) => c.id);
@@ -25,7 +25,13 @@ export function Column({ column, cards, onAddCard, onUpdateCard, onDeleteCard, o
             <p className="empty-message">カードがありません</p>
           ) : (
             cards.map((card) => (
-              <Card key={card.id} card={card} onUpdate={onUpdateCard} onDelete={onDeleteCard} />
+              <Card
+                key={card.id}
+                card={card}
+                columns={columns}
+                onUpdate={onUpdateCard}
+                onDelete={onDeleteCard}
+              />
             ))
           )}
         </div>

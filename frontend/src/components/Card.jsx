@@ -4,7 +4,7 @@ import { useState } from "react";
 import { formatDueDate, priorityLabel } from "../utils/cardUtils";
 import { CardForm } from "./CardForm";
 
-export function Card({ card, onUpdate, onDelete }) {
+export function Card({ card, columns, onUpdate, onDelete }) {
   const [isEditing, setIsEditing] = useState(false);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: card.id, disabled: isEditing });
@@ -22,6 +22,8 @@ export function Card({ card, onUpdate, onDelete }) {
           initialDescription={card.description}
           initialPriority={card.priority}
           initialDueDate={card.dueDate || ""}
+          initialColumnId={card.columnId}
+          columns={columns}
           confirmLabel="保存"
           onConfirm={(values) => {
             onUpdate(card.id, values);

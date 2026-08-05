@@ -99,6 +99,7 @@ export function Board() {
           <Column
             key={column.id}
             column={column}
+            columns={columns}
             cards={cardsInColumn(column.id)}
             onAddCard={addCard}
             onUpdateCard={updateCard}
