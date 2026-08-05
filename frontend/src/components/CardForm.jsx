@@ -6,6 +6,8 @@ export function CardForm({
   initialDescription = "",
   initialPriority = "medium",
   initialDueDate = "",
+  initialColumnId = null,
+  columns = [],
   confirmLabel,
   onConfirm,
   onCancel,
@@ -14,6 +16,7 @@ export function CardForm({
   const [description, setDescription] = useState(initialDescription);
   const [priority, setPriority] = useState(initialPriority);
   const [dueDate, setDueDate] = useState(initialDueDate || "");
+  const [columnId, setColumnId] = useState(initialColumnId ?? columns[0]?.id ?? null);
   const titleInputRef = useRef(null);
 
   function submit() {
@@ -26,6 +29,7 @@ export function CardForm({
       description,
       priority,
       dueDate: dueDate || null,
+      columnId,
     });
   }
 
@@ -82,6 +86,23 @@ export function CardForm({
           onChange={(e) => setDueDate(e.target.value)}
         />
       </div>
+
+      {columns.length > 0 ? (
+        <select
+          className="cf-status"
+          value={columnId ?? ""}
+          onChange={(e) => {
+            const selected = columns.find((col) => String(col.id) === e.target.value);
+            setColumnId(selected ? selected.id : e.target.value);
+          }}
+        >
+          {columns.map((col) => (
+            <option key={col.id} value={col.id}>
+              {"ステータス: " + col.name}
+            </option>
+          ))}
+        </select>
+      ) : null}
 
       <div className="cf-actions">
         <button type="button" className="cf-confirm" onClick={submit}>

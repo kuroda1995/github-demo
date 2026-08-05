@@ -85,21 +85,41 @@ export function useCards() {
     if (!title) return;
     const current = cards.find((c) => c.id === id);
     if (!current) return;
+
+    const nextColumnId = values.columnId ?? current.columnId;
+    const isMovingColumn = nextColumnId !== current.columnId;
+    const previous = cards;
+
+    let nextCards = cards.map((c) =>
+      c.id === id
+        ? {
+            ...c,
+            title,
+            description: values.description.trim(),
+            priority: values.priority || "medium",
+            dueDate: values.dueDate || null,
+          }
+        : c
+    );
+
+    if (isMovingColumn) {
+      // ステータス（列）が変わった場合は、移動先の列内で優先度順に自動で並び替える
+      nextCards = moveCardInList(nextCards, id, nextColumnId, nextOrder(nextCards, nextColumnId));
+      nextCards = sortColumnCards(nextCards, nextColumnId, "priority");
+    }
+
+    setCards(nextCards);
+
     try {
-      const saved = await cardsApi.updateCard(
-        id,
-        toCardRequest({
-          ...current,
-          title,
-          description: values.description.trim(),
-          priority: values.priority || "medium",
-          dueDate: values.dueDate || null,
-        })
-      );
-      setCards((prev) => prev.map((c) => (c.id === id ? saved : c)));
+      const changed = nextCards.filter((next) => {
+        const prev = previous.find((c) => c.id === next.id);
+        return next.id === id || (prev && (prev.order !== next.order || prev.columnId !== next.columnId));
+      });
+      await Promise.all(changed.map((c) => cardsApi.updateCard(c.id, toCardRequest(c))));
       setError(null);
     } catch (e) {
       setError(SAVE_ERROR_MESSAGE);
+      loadAll();
     }
   }
 
