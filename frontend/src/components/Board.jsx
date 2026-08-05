@@ -11,12 +11,14 @@ import { useCards } from "../hooks/useCards";
 import { formatDueDate, priorityLabel } from "../utils/cardUtils";
 import { Column } from "./Column";
 import { ErrorBanner } from "./ErrorBanner";
+import { SearchBar } from "./SearchBar";
 
 export function Board() {
   const {
     cards,
     columns,
     isLoading,
+    isSearching,
     error,
     cardsInColumn,
     addCard,
@@ -24,6 +26,7 @@ export function Board() {
     deleteCard,
     moveCard,
     sortColumn,
+    searchCards,
   } = useCards();
   const [activeId, setActiveId] = useState(null);
 
@@ -85,6 +88,12 @@ export function Board() {
       onDragCancel={() => setActiveId(null)}
     >
       <ErrorBanner message={error} />
+      <div className="search-bar-row">
+        <SearchBar onSearch={searchCards} />
+        {isSearching ? (
+          <span className="search-status">検索結果: {cards.length}件</span>
+        ) : null}
+      </div>
       <main className="board">
         {columns.map((column) => (
           <Column

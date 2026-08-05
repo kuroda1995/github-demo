@@ -16,10 +16,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Locale;
 
 @RestController
 @RequestMapping("/api/cards")
@@ -34,8 +36,35 @@ public class CardController {
     }
 
     @GetMapping
-    public List<Card> getCards() {
-        return cardRepository.findAllByOrderByOrderAsc();
+    public List<Card> getCards(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String priority,
+            @RequestParam(required = false) String columnId
+    ) {
+        List<Card> cards = cardRepository.findAllByOrderByOrderAsc();
+
+        if (keyword != null && !keyword.isBlank()) {
+            String lowerKeyword = keyword.toLowerCase(Locale.ROOT);
+            cards = cards.stream()
+                    .filter(c -> containsIgnoreCase(c.getTitle(), lowerKeyword)
+                            || containsIgnoreCase(c.getDescription(), lowerKeyword))
+                    .toList();
+        }
+
+        if (priority != null && !priority.isBlank()) {
+            Priority priorityValue = Priority.fromValue(priority);
+            cards = cards.stream().filter(c -> c.getPriority() == priorityValue).toList();
+        }
+
+        if (columnId != null && !columnId.isBlank()) {
+            cards = cards.stream().filter(c -> columnId.equals(c.getColumnId())).toList();
+        }
+
+        return cards;
+    }
+
+    private boolean containsIgnoreCase(String value, String lowerKeyword) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(lowerKeyword);
     }
 
     @PostMapping
