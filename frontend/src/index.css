@@ -42,6 +42,12 @@ body {
   color: var(--accent-dark);
 }
 
+.board-status {
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
 .board {
   display: flex;
   gap: 20px;
