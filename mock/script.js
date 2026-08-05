@@ -127,6 +127,37 @@
     render();
   }
 
+  function priorityRank(value) {
+    const index = PRIORITIES.findIndex((p) => p.value === value);
+    return index === -1 ? PRIORITIES.length : index;
+  }
+
+  /**
+   * ボタンで押された瞬間だけ並び替える一回限りの操作。
+   * その後は order 値が更新されるので、引き続き自由なドラッグ&ドロップも使える。
+   */
+  function sortColumn(columnId, sortKey) {
+    const list = cardsInColumn(columnId);
+    const sorted = [...list].sort((a, b) => {
+      if (sortKey === "priority") {
+        return priorityRank(a.priority) - priorityRank(b.priority);
+      }
+      if (sortKey === "dueDate") {
+        const aVal = a.dueDate || "9999-99-99";
+        const bVal = b.dueDate || "9999-99-99";
+        if (aVal < bVal) return -1;
+        if (aVal > bVal) return 1;
+        return 0;
+      }
+      return 0;
+    });
+    sorted.forEach((card, index) => {
+      card.order = index;
+    });
+    saveCards();
+    render();
+  }
+
   /**
    * タイトル・説明文・優先度・期限をまとめて入力/編集するフォームを作る。
    * 追加(add-card)・編集(card click)の両方から共通で使う。
@@ -302,6 +333,24 @@
     header.appendChild(nameEl);
     header.appendChild(countEl);
 
+    const sortControls = document.createElement("div");
+    sortControls.className = "sort-controls";
+
+    const sortByPriorityBtn = document.createElement("button");
+    sortByPriorityBtn.type = "button";
+    sortByPriorityBtn.className = "sort-button";
+    sortByPriorityBtn.textContent = "優先度順";
+    sortByPriorityBtn.addEventListener("click", () => sortColumn(column.id, "priority"));
+
+    const sortByDueBtn = document.createElement("button");
+    sortByDueBtn.type = "button";
+    sortByDueBtn.className = "sort-button";
+    sortByDueBtn.textContent = "期限順";
+    sortByDueBtn.addEventListener("click", () => sortColumn(column.id, "dueDate"));
+
+    sortControls.appendChild(sortByPriorityBtn);
+    sortControls.appendChild(sortByDueBtn);
+
     const listEl = document.createElement("div");
     listEl.className = "card-list";
 
@@ -331,6 +380,7 @@
     });
 
     columnEl.appendChild(header);
+    columnEl.appendChild(sortControls);
     columnEl.appendChild(listEl);
     columnEl.appendChild(addBtn);
 

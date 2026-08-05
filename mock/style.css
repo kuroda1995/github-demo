@@ -83,6 +83,26 @@ body {
   color: var(--text-muted);
 }
 
+.sort-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.sort-button {
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sort-button:hover {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
 .card-list {
   display: flex;
   flex-direction: column;
