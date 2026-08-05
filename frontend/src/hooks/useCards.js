@@ -26,6 +26,7 @@ export function useCards() {
   const [cards, setCards] = useState([]);
   const [columns, setColumns] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState(null);
 
   const loadAll = useCallback(async () => {
@@ -48,6 +49,17 @@ export function useCards() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const searchCards = useCallback(async (filters) => {
+    try {
+      const result = await cardsApi.getCards(filters);
+      setCards(result);
+      setIsSearching(Boolean(filters.keyword || filters.priority || filters.columnId));
+      setError(null);
+    } catch (e) {
+      setError(LOAD_ERROR_MESSAGE);
+    }
+  }, []);
 
   async function addCard(columnId, values) {
     const title = values.title.trim();
@@ -139,6 +151,7 @@ export function useCards() {
     cards,
     columns,
     isLoading,
+    isSearching,
     error,
     cardsInColumn: (columnId) => cardsInColumn(cards, columnId),
     addCard,
@@ -146,5 +159,6 @@ export function useCards() {
     deleteCard,
     moveCard,
     sortColumn,
+    searchCards,
   };
 }
