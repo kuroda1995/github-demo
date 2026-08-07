@@ -86,7 +86,7 @@ public class CardController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteCard(@PathVariable String id) {
         if (!cardRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "card not found: " + id);
         }
         cardRepository.deleteById(id);
         return ResponseEntity.noContent().build();
