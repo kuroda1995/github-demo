@@ -197,6 +197,16 @@ Terraformを使う作業は、常に次の3〜4コマンドの繰り返し。
 
 `infra` フォルダの中に、役割ごとに複数の `.tf` ファイルを作る（1つのファイルにまとめても動くが、分けたほうが見通しが良い）。
 
+### SSHキーペアを作る(まだ無い場合)
+
+EC2にSSHでログインするための鍵ペアが手元に無ければ、先に作っておく。
+
+```powershell
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '""' -C "github-demo-terraform-deployer"
+```
+
+`~/.ssh/id_ed25519`(秘密鍵、絶対に他人に渡さない)と`~/.ssh/id_ed25519.pub`(公開鍵)の2つが作られる。公開鍵の方をTerraformでEC2に登録し、秘密鍵の方でSSH接続する。
+
 ### providers.tf — 「AWSを使う」という宣言
 
 ```hcl
@@ -240,7 +250,7 @@ variable "my_ip_cidr" {
 }
 
 variable "ssh_public_key_path" {
-  default = "~/.ssh/id_rsa.pub"
+  default = "~/.ssh/id_ed25519.pub"
 }
 ```
 
@@ -347,11 +357,14 @@ chmod +x /usr/local/bin/docker-compose
 cd /home/ec2-user
 git clone https://github.com/kuroda1995/github-demo.git app
 cd app
-docker-compose up -d --build
+
+# Amazon Linux 2023同梱のDockerはbuildxが古く、docker-composeのビルドがそのままでは失敗するため、
+# 従来方式のビルド(BuildKit無効)に切り替える
+DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose up -d --build
 ```
 
-> **注意 — 現状とのギャップ**
-> 今の `backend/docker-compose.yml` はPostgreSQLコンテナのみを定義している（バックエンド自体は `./gradlew bootRun` でローカル実行する前提）。この手順を実際に動かすには、[7章](#7-アプリを動かす)のとおり、バックエンドとフロントエンドをDockerイメージ化し、composeファイルに `backend`・`frontend` サービスとして追加する作業が必要。
+> **ポイント — 実機検証済み**
+> このuser_data.sh・[7章](#7-アプリを動かす)のDockerfile/docker-compose.ymlは、実際にterraform applyでEC2を作成し、フロント(`/`)とAPI(`/api/columns`など)がブラウザ・curlの両方で200を返すことまで確認済み。
 
 ### outputs.tf — 作った結果を表示する
 
@@ -378,32 +391,76 @@ terraform apply -var="my_ip_cidr=<自分のIP>/32"
 
 ## 7. アプリを動かす
 
-「サーバーを作る」と「アプリを動かす」は別の話。EC2ができても、まだgithub-demoをコンテナとして動かせる状態にはなっていない。最低限、次の2つが必要。
+「サーバーを作る」と「アプリを動かす」は別の話。EC2ができても、まだgithub-demoをコンテナとして動かせる状態にはなっていない。必要なファイルは3つ。実際にこの内容でビルド・起動・動作確認まで済んでいる。
 
 ### 7.1 バックエンド用のDockerfile（`backend/Dockerfile`）
 
 ```dockerfile
+# --- ビルド用ステージ: Gradle Wrapperでjarをビルドする ---
+FROM gradle:8.10-jdk21 AS build
+WORKDIR /app
+COPY . .
+RUN chmod +x gradlew && ./gradlew bootJar -x test --no-daemon
+
+# --- 実行用ステージ: ビルドしたjarだけを軽量イメージに積む ---
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY build/libs/*.jar app.jar
+COPY --from=build /app/build/libs/*.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
+> **注意 — `chmod +x gradlew` が無いとビルドに失敗する**
+> Gitでクローンした直後の`gradlew`に実行権限が付いていないと、`Permission denied`でビルドが止まる。ビルドはコンテナの中(Linux)で完結するため、Windows側で`./gradlew test`が動かない問題とは無関係で、ここでは正常にビルドできる。
+
 ### 7.2 フロントエンド用のDockerfile（`frontend/Dockerfile`、ビルド済みファイルをNginxで配信）
 
 ```dockerfile
+# --- ビルド用ステージ: Viteで静的ファイルにビルドする ---
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY . .
-RUN npm ci && npm run build
+RUN npm ci
+# 空文字にすることで、フロントは相対パス(/api/...)でAPIを呼ぶ。
+# 同じNginxが配信するページからのアクセスになるため、CORS設定も不要になる。
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN npm run build
 
+# --- 配信用ステージ: ビルド済みファイルをNginxで配信する ---
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 ```
 
-### 7.3 composeファイルに3つのサービスをまとめる（リポジトリのルートに新規作成する `docker-compose.yml`）
+### 7.3 Nginxの設定（`frontend/nginx.conf`、`/api/`だけバックエンドへ転送する)
+
+```nginx
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # /api/ 宛のリクエストだけ、同じDockerネットワーク内のbackendコンテナへ内部転送する。
+    # backendコンテナ自体は外部に公開していない(コンテナ間の名前解決で "backend" に到達する)。
+    location /api/ {
+        proxy_pass http://backend:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+> **ポイント — CorsConfigは変更不要**
+> ブラウザは常にNginx(80番)にしかアクセスせず、Nginxが`/api/`をバックエンドへ内部転送する構成にしたことで、フロントとバックエンドは見かけ上「同じオリジン」になる。同一オリジンへのリクエストにCORSチェックは働かないため、ローカル開発用の`CorsConfig.java`(`http://localhost:5173`のみ許可)は変更する必要がない。
+
+### 7.4 composeファイルに3つのサービスをまとめる（リポジトリのルートに新規作成する `docker-compose.yml`）
 
 ```yaml
 services:
@@ -411,8 +468,8 @@ services:
     image: postgres:16
     environment:
       POSTGRES_DB: trello
-      POSTGRES_USER: trello
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     volumes:
       - db_data:/var/lib/postgresql/data
 
@@ -420,8 +477,8 @@ services:
     build: ./backend
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/trello
-      SPRING_DATASOURCE_USERNAME: trello
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
     depends_on:
       - db
 
@@ -436,21 +493,23 @@ volumes:
   db_data:
 ```
 
-> **注意 — パスワードをコードに直書きしない**
-> `DB_PASSWORD` のような秘密情報は、EC2上の `.env` ファイル（Gitには含めない）に入れて、composeがそれを読む形にする。慣れてきたらAWS Secrets ManagerやSSM Parameter Storeで管理する方法に進化させる。
+DBのユーザー名・パスワードは、ローカル開発用の`backend/docker-compose.yml`・`application.properties`と同じ`postgres`/`postgres`に揃えている。学校の課題として個人利用のみを想定した構成のため、ここでは簡易さを優先しているが、本番運用に近づけるなら[次のステップ](#11-次のステップ)でAWS Secrets ManagerやSSM Parameter Storeへの切り出しを検討するとよい。
 
-backend/frontendそれぞれの `CorsConfig` やAPIの向き先（`.env` の `VITE_API_URL` 等）も、localhost前提の値からEC2のパブリックIP（または後述するドメイン）に変更する必要がある。この差し替え作業は、既存の設計に合わせて別途Issueを切って進めるのがおすすめ。
+> **注意 — EC2上でビルドする際はBuildKitを無効化する**
+> Amazon Linux 2023に標準で入っているDockerのbuildxはバージョンが古く、そのまま`docker-compose up -d --build`を実行すると`compose build requires buildx 0.17.0 or later`で失敗する。[6章のuser_data.sh](#6-インフラをコードで作る)は`DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0`を付けて回避済み。SSHで入って手動で再ビルドする場合も同様に付ける必要がある。
 
 ## 8. 動作確認
 
 1. **ブラウザで確認** — `http://<terraform apply の出力の public_ip>` にアクセスし、画面が表示されるか確認する
 2. **SSHでログインして確認**
    ```powershell
-   ssh -i ~/.ssh/id_rsa ec2-user@<public_ip>
-   docker ps
-   docker compose logs -f backend
+   ssh -i ~/.ssh/id_ed25519 ec2-user@<public_ip>
+   sudo docker ps
+   sudo docker-compose logs -f backend
    ```
-3. **よくあるつまずき** — 画面が表示されない場合、多くはセキュリティグループ（80番の許可漏れ）、user_dataスクリプトの実行失敗（`/var/log/cloud-init-output.log` で確認可能）、フロントのAPI向き先の設定ミスのいずれかが原因
+3. **よくあるつまずき**
+   - 画面が表示されない → セキュリティグループ（80番の許可漏れ）、user_dataスクリプトの実行失敗（`cloud-init status`や`/var/log/cloud-init-output.log`で確認可能）が主な原因
+   - `/api/...`だけ502エラーになる → 起動直後はSpring Bootの起動(数十秒)がNginxより遅れるため。少し待って再アクセスすれば解消することが多い。直らない場合は`sudo docker-compose logs backend`でエラーを確認する
 
 ## 9. 後片付けとコスト管理
 
