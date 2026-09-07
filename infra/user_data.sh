@@ -11,4 +11,7 @@ chmod +x /usr/local/bin/docker-compose
 cd /home/ec2-user
 git clone https://github.com/kuroda1995/github-demo.git app
 cd app
-docker-compose up -d --build
+
+# Amazon Linux 2023同梱のDockerはbuildxが古く、docker-composeのビルドがそのままでは失敗するため、
+# 従来方式のビルド(BuildKit無効)に切り替える
+DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose up -d --build
