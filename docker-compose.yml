@@ -1,21 +1,11 @@
 services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: trello
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
   backend:
     build: ./backend
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/trello
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${RDS_ENDPOINT}:5432/trello
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
-    depends_on:
-      - db
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -23,6 +13,4 @@ services:
       - "80:80"
     depends_on:
       - backend
-
-volumes:
-  db_data:
+    restart: unless-stopped
