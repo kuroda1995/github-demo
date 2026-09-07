@@ -88,7 +88,7 @@ flowchart LR
 | ディスク | ルートボリューム30GB（`root_block_device` で明示指定） | EBS 30GB-月まで無料。Amazon Linux 2023のAMIはスナップショットの都合で30GB未満に縮小できないため、無料枠のちょうど上限に設定している(他に追加のボリュームを作ると無料枠を超える点に注意) |
 | 固定IP | 使わない（EC2起動時に自動で割り当たるパブリックIPのみ） | Elastic IP（固定IP）は「確保はしたが未使用」の状態だと課金される。今回はそもそも確保しないことでこのリスクを避ける |
 | ネットワーク機器 | NAT Gateway・ロードバランサー（ALB）は使わない | どちらも無料利用枠の対象外で、起動しているだけで時間課金が発生する。個人利用の学習用途では不要なので構成に含めない |
-| データベース | 専用のRDSは使わず、EC2上のDockerコンテナでPostgreSQLを動かす | RDSは無料利用枠があるものの対象インスタンスクラスが限られる。学習目的なら同じEC2内のコンテナで十分 |
+| データベース | RDS(PostgreSQL)を`db.t3.micro`・シングルAZ・ストレージ20GBで使う | インスタンス750時間/月・ストレージ20GB-月までそれぞれ無料。マルチAZ構成は無料枠の対象外のため、あえてシングルAZにしている |
 | ドメイン | 独自ドメイン・Route 53は使わない（IPアドレスに直接アクセス） | Route 53のホストゾーンは1つでも月額課金が発生するため、今回は対象外（必要になれば[次のステップ](#11-次のステップ)で追加） |
 
 > **注意 — 無料利用枠には期限がある**
@@ -366,12 +366,97 @@ DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose up -d --build
 > **ポイント — 実機検証済み**
 > このuser_data.sh・[7章](#7-アプリを動かす)のDockerfile/docker-compose.ymlは、実際にterraform applyでEC2を作成し、フロント(`/`)とAPI(`/api/columns`など)がブラウザ・curlの両方で200を返すことまで確認済み。
 
+### RDS(PostgreSQL) — EC2上のDockerコンテナからマネージドDBへ
+
+Dockerコンテナで動かしていたPostgreSQLを、AWSのマネージドDBサービス「RDS」に切り出す。**EC2からのみ接続でき、インターネットからは直接アクセスできない**構成にする。
+
+```hcl
+variable "db_master_password" {
+  description = "RDSのマスターパスワード。terraform.tfvarsで指定する(Gitにコミットしない)"
+  type        = string
+  sensitive   = true
+}
+```
+
+```hcl
+# RDSはDefault VPC内の複数のサブネット(異なるAZ)にまたがって配置する必要があるため、
+# EC2で使っているのと同じDefault VPCのサブネット一覧をそのまま使う
+resource "aws_db_subnet_group" "app" {
+  name       = "${var.project_name}-db-subnet-group"
+  subnet_ids = data.aws_subnets.default.ids
+}
+
+# RDS専用のセキュリティグループ。5432番はEC2のセキュリティグループ(aws_security_group.app)からの
+# 通信だけを許可し、IPアドレスやインターネット全体には一切開放しない
+resource "aws_security_group" "rds" {
+  name        = "${var.project_name}-rds-sg"
+  description = "Allow PostgreSQL only from the app EC2 instance"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description     = "PostgreSQL from the app EC2 security group only"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_db_instance" "app" {
+  identifier     = "${var.project_name}-db"
+  engine         = "postgres"
+  engine_version = "16"
+  # 無料利用枠の対象(750時間/月まで無料)。マルチAZにすると無料枠の対象外になるため、あえてシングルAZ構成にする
+  instance_class = "db.t3.micro"
+  multi_az       = false
+
+  # 無料利用枠(20GB-月まで無料)ちょうど
+  allocated_storage = 20
+  storage_type      = "gp2"
+
+  db_name  = "trello"
+  username = "postgres"
+  password = var.db_master_password
+
+  db_subnet_group_name   = aws_db_subnet_group.app.name
+  vpc_security_group_ids = [aws_security_group.rds.id]
+
+  # インターネットから直接アクセスできないようにする(EC2経由でのみ到達可能)
+  publicly_accessible = false
+
+  backup_retention_period = 1
+  skip_final_snapshot     = true
+  deletion_protection     = false
+}
+```
+
+`aws_security_group`の`ingress`で`cidr_blocks`(IPアドレス)ではなく`security_groups = [aws_security_group.app.id]`を指定しているのがポイント。EC2側のセキュリティグループそのものを参照しているため、EC2のパブリックIPが変わっても接続制限は自動的に保たれる。
+
+> **注意 — `terraform.tfvars`にパスワードを設定する**
+> `db_master_password`はデフォルト値を持たないため、`infra/terraform.tfvars`に追記が必要(このファイルは`.gitignore`済み)。
+> ```
+> db_master_password = "十分に長いランダムな文字列"
+> ```
+> PowerShellなら`-join ((48..57)+(65..90)+(97..122)|Get-Random -Count 24|%{[char]$_})`のようなコマンドでランダムな文字列を生成できる。
+
 ### outputs.tf — 作った結果を表示する
 
 ```hcl
 output "public_ip" {
   value       = aws_instance.app.public_ip
   description = "ブラウザでアクセスするIPアドレス"
+}
+
+output "rds_endpoint" {
+  value       = aws_db_instance.app.address
+  description = "RDSの接続先ホスト名(EC2からのみ到達可能)"
 }
 ```
 
@@ -388,6 +473,9 @@ terraform apply -var="my_ip_cidr=<自分のIP>/32"
 
 > **ポイント — 毎回 -var を打つのが面倒な場合**
 > `infra/terraform.tfvars` というファイルに `my_ip_cidr = "203.0.113.10/32"` のように書いておくと、Terraformが自動で読み込む。このファイルは環境固有の値なので、`.gitignore` に入れて管理対象から外すこと。
+
+> **注意 — `user_data`を変更するapplyはEC2を再起動させ、パブリックIPが変わることがある**
+> `user_data.sh`を編集した後に`terraform apply`すると、AWSは変更を反映するためにEC2を裏で再起動することがある。Elastic IP(固定IP)を使っていない構成では、再起動のたびにパブリックIPが変わる。さらに、Dockerコンテナに再起動時の自動復帰設定([7章](#7-アプリを動かす)のdocker-compose.ymlにある`restart: unless-stopped`)が無いと、コンテナも止まったままになる。`apply`後は`terraform output public_ip`で最新のIPを確認し、`docker ps`でコンテナが動いているか確認する習慣をつけるとよい。
 
 ## 7. アプリを動かす
 
@@ -460,27 +548,19 @@ server {
 > **ポイント — CorsConfigは変更不要**
 > ブラウザは常にNginx(80番)にしかアクセスせず、Nginxが`/api/`をバックエンドへ内部転送する構成にしたことで、フロントとバックエンドは見かけ上「同じオリジン」になる。同一オリジンへのリクエストにCORSチェックは働かないため、ローカル開発用の`CorsConfig.java`(`http://localhost:5173`のみ許可)は変更する必要がない。
 
-### 7.4 composeファイルに3つのサービスをまとめる（リポジトリのルートに新規作成する `docker-compose.yml`）
+### 7.4 composeファイルに2つのサービスをまとめる（リポジトリのルートに新規作成する `docker-compose.yml`）
+
+DBはRDSに切り出したため、composeで管理するのは`backend`・`frontend`の2つだけでよい。
 
 ```yaml
 services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: trello
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
   backend:
     build: ./backend
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/trello
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${RDS_ENDPOINT}:5432/trello
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
-    depends_on:
-      - db
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -488,12 +568,20 @@ services:
       - "80:80"
     depends_on:
       - backend
-
-volumes:
-  db_data:
+    restart: unless-stopped
 ```
 
-DBのユーザー名・パスワードは、ローカル開発用の`backend/docker-compose.yml`・`application.properties`と同じ`postgres`/`postgres`に揃えている。学校の課題として個人利用のみを想定した構成のため、ここでは簡易さを優先しているが、本番運用に近づけるなら[次のステップ](#11-次のステップ)でAWS Secrets ManagerやSSM Parameter Storeへの切り出しを検討するとよい。
+`RDS_ENDPOINT`・`DB_PASSWORD`はcomposeファイル自体には書かず、EC2上の`.env`ファイル(Gitには含めない)から読み込む。
+
+```bash
+# EC2にSSHでログインしてから実行
+cat > ~/app/.env <<EOF
+RDS_ENDPOINT=$(terraformのoutputで表示されたrds_endpointの値)
+DB_PASSWORD=$(terraform.tfvarsに設定したdb_master_passwordの値)
+EOF
+```
+
+`restart: unless-stopped`は、EC2の再起動時にコンテナが自動で立ち上がり直すようにするための設定([6章の注意](#6-インフラをコードで作る)にある、`terraform apply`によるEC2再起動でコンテナが止まったままになる問題への対策)。
 
 > **注意 — EC2上でビルドする際はBuildKitを無効化する**
 > Amazon Linux 2023に標準で入っているDockerのbuildxはバージョンが古く、そのまま`docker-compose up -d --build`を実行すると`compose build requires buildx 0.17.0 or later`で失敗する。[6章のuser_data.sh](#6-インフラをコードで作る)は`DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0`を付けて回避済み。SSHで入って手動で再ビルドする場合も同様に付ける必要がある。
@@ -510,6 +598,12 @@ DBのユーザー名・パスワードは、ローカル開発用の`backend/doc
 3. **よくあるつまずき**
    - 画面が表示されない → セキュリティグループ（80番の許可漏れ）、user_dataスクリプトの実行失敗（`cloud-init status`や`/var/log/cloud-init-output.log`で確認可能）が主な原因
    - `/api/...`だけ502エラーになる → 起動直後はSpring Bootの起動(数十秒)がNginxより遅れるため。少し待って再アクセスすれば解消することが多い。直らない場合は`sudo docker-compose logs backend`でエラーを確認する
+4. **RDSが「EC2からのみ」に制限できているか確認する**(念のための負のテスト) — 自分のPCから直接RDSのポートへ疎通を試み、タイムアウトすることを確認する
+   ```powershell
+   # PowerShellの場合。応答が無くタイムアウトすれば、外部からは遮断されている証拠
+   Test-NetConnection -ComputerName <terraform output の rds_endpoint> -Port 5432
+   ```
+   EC2からは同じ確認をして接続できることも合わせて確認するとよい(`ssh`で入って`nc -zv <rds_endpoint> 5432`など)。
 
 ## 9. 後片付けとコスト管理
 
@@ -536,7 +630,7 @@ Terraformで作った分はこれで丸ごと消える。コンソール上の�
 
 | 項目 | 内容 |
 |------|------|
-| RDSへ移行 | DockerのPostgreSQLコンテナをやめ、AWSのマネージドDBサービス「RDS」に切り出す。バックアップや障害対応がAWS側で自動化される |
+| ~~RDSへ移行~~(対応済み) | ~~DockerのPostgreSQLコンテナをやめ、AWSのマネージドDBサービス「RDS」に切り出す~~。[6章](#6-インフラをコードで作る)のとおり対応済み。EC2のセキュリティグループからの通信のみ許可し、インターネットからは直接アクセスできない |
 | S3 + CloudFront | フロントエンドの静的ファイルをEC2から追い出し、S3（ファイル置き場）+CloudFront（世界中に配信網を持つCDN）で配信する |
 | 独自VPC設計 | Default VPCの間借りをやめ、パブリック／プライベートサブネットを自分で設計する。DBをインターネットから完全に遮断できる |
 | ECS Fargate | EC2を自分で管理する代わりに、コンテナの実行環境そのものをAWSに任せる。サーバーのOSパッチ管理などから解放される |

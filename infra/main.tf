@@ -72,3 +72,74 @@ resource "aws_instance" "app" {
     Name = "${var.project_name}-server"
   }
 }
+
+# --- RDS(PostgreSQL): EC2上のDockerコンテナで動かしていたDBを、AWSのマネージドDBへ切り出す ---
+
+# RDSはDefault VPC内の複数のサブネット(異なるAZ)にまたがって配置する必要があるため、
+# EC2で使っているのと同じDefault VPCのサブネット一覧をそのまま使う
+resource "aws_db_subnet_group" "app" {
+  name       = "${var.project_name}-db-subnet-group"
+  subnet_ids = data.aws_subnets.default.ids
+
+  tags = {
+    Name = "${var.project_name}-db-subnet-group"
+  }
+}
+
+# RDS専用のセキュリティグループ。5432番はEC2のセキュリティグループ(aws_security_group.app)からの
+# 通信だけを許可し、IPアドレスやインターネット全体には一切開放しない
+resource "aws_security_group" "rds" {
+  name        = "${var.project_name}-rds-sg"
+  description = "Allow PostgreSQL only from the app EC2 instance"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description     = "PostgreSQL from the app EC2 security group only"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-rds-sg"
+  }
+}
+
+resource "aws_db_instance" "app" {
+  identifier     = "${var.project_name}-db"
+  engine         = "postgres"
+  engine_version = "16"
+  # 無料利用枠の対象(750時間/月まで無料)。マルチAZにすると無料枠の対象外になるため、あえてシングルAZ構成にする
+  instance_class = "db.t3.micro"
+  multi_az       = false
+
+  # 無料利用枠(20GB-月まで無料)ちょうど
+  allocated_storage = 20
+  storage_type      = "gp2"
+
+  db_name  = "trello"
+  username = "postgres"
+  password = var.db_master_password
+
+  db_subnet_group_name   = aws_db_subnet_group.app.name
+  vpc_security_group_ids = [aws_security_group.rds.id]
+
+  # インターネットから直接アクセスできないようにする(EC2経由でのみ到達可能)
+  publicly_accessible = false
+
+  backup_retention_period = 1
+  skip_final_snapshot     = true
+  deletion_protection     = false
+
+  tags = {
+    Name = "${var.project_name}-db"
+  }
+}
