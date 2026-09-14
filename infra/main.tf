@@ -60,7 +60,12 @@ resource "aws_instance" "app" {
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.app.id]
   key_name               = aws_key_pair.deployer.key_name
-  user_data              = file("${path.module}/user_data.sh")
+  # RDSのエンドポイント・パスワードを埋め込んだ状態でuser_data.shを生成する。
+  # これによりEC2は起動時に自分で.envを作り、手動でのSSH設定作業なしにアプリが立ち上がる。
+  user_data = templatefile("${path.module}/user_data.sh", {
+    rds_endpoint = aws_db_instance.app.address
+    db_password  = var.db_master_password
+  })
 
   # ルートボリュームのサイズを明示し、無料利用枠(30GB-月)を超えないようにする
   root_block_device {
