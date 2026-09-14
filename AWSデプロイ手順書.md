@@ -322,7 +322,13 @@ resource "aws_instance" "app" {
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.app.id]
   key_name               = aws_key_pair.deployer.key_name
-  user_data              = file("${path.module}/user_data.sh")
+  # RDSのエンドポイント・パスワードを埋め込んだ状態でuser_data.shを生成する。
+  # これによりEC2は起動時に自分で.envを作り、手動でのSSH設定作業なしにアプリが立ち上がる。
+  # (aws_db_instance.appは後述。参照しているだけで、Terraformが自動的にRDS→EC2の順で作成する)
+  user_data = templatefile("${path.module}/user_data.sh", {
+    rds_endpoint = aws_db_instance.app.address
+    db_password  = var.db_master_password
+  })
 
   # ルートボリュームのサイズを明示し、無料利用枠(30GB-月)を超えないようにする
   root_block_device {
@@ -339,9 +345,12 @@ resource "aws_instance" "app" {
 > **用語 — セキュリティグループ**
 > サーバーの前に立つ「受付」のようなもので、「どのポート番号への通信を、どこから許可するか」を制御する仮想ファイアウォール。今回は「SSH（22番）は自分のPCからだけ」「HTTP（80番）は誰からでも」許可している。
 
+> **用語 — `templatefile`関数**
+> `file()`はファイルの中身をそのまま読み込むが、`templatefile()`は読み込んだ中身にある`${変数名}`をTerraform側の値で置き換えてから使う。プログラミングでいう「テンプレートエンジン」と同じ考え方。これにより、RDSのエンドポイント(作ってみるまでURLが分からない)のような「作った後でないと分からない値」を、起動スクリプトに埋め込める。
+
 ### user_data.sh — サーバー起動時に自動実行するスクリプト
 
-EC2は起動時にこのスクリプトを自動実行する。DockerとDocker Composeを入れ、リポジトリを取得して `docker compose up` するところまでを自動化する。
+EC2は起動時にこのスクリプトを自動実行する。DockerとDocker Composeを入れ、リポジトリを取得し、RDSの接続情報を`.env`に書き込んでから`docker compose up`するところまでを自動化する。
 
 ```bash
 #!/bin/bash
@@ -358,13 +367,25 @@ cd /home/ec2-user
 git clone https://github.com/kuroda1995/github-demo.git app
 cd app
 
+# RDSの接続情報をTerraformから受け取り、.envに書き込む(docker-compose.ymlが読み込む)
+cat > .env <<'ENVEOF'
+RDS_ENDPOINT=${rds_endpoint}
+DB_PASSWORD=${db_password}
+ENVEOF
+chmod 600 .env
+
 # Amazon Linux 2023同梱のDockerはbuildxが古く、docker-composeのビルドがそのままでは失敗するため、
 # 従来方式のビルド(BuildKit無効)に切り替える
 DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose up -d --build
 ```
 
+`${rds_endpoint}`・`${db_password}`はbashの変数展開ではなく、上の`templatefile()`がapply時に実際の値へ置き換える部分。このファイル自体はテンプレートなので、単体でbashスクリプトとして実行はできない(Terraform経由で生成された後のものだけが実行可能)。
+
+> **注意 — マスターパスワードがEC2のインスタンスメタデータに残る**
+> この方式では、RDSのマスターパスワードがEC2の`user_data`(インスタンスメタデータ)に平文で保存される。同じAWSアカウント内でEC2を読み取れる権限を持つ人・何か別の脆弱性でこのEC2上でコードを実行できてしまった人には見られる状態になる、というトレードオフがある。個人利用・学習目的のアカウントでは許容範囲としているが、複数人で使うAWSアカウントや、より重要なデータを扱う場合は、AWS Secrets ManagerやSSM Parameter Storeに置き換えることを検討する([次のステップ](#11-次のステップ)参照)。
+
 > **ポイント — 実機検証済み**
-> このuser_data.sh・[7章](#7-アプリを動かす)のDockerfile/docker-compose.ymlは、実際にterraform applyでEC2を作成し、フロント(`/`)とAPI(`/api/columns`など)がブラウザ・curlの両方で200を返すことまで確認済み。
+> [7章](#7-アプリを動かす)のDockerfile/docker-compose.ymlは、実際にterraform applyでEC2を作成し、フロント(`/`)とAPI(`/api/columns`など)がブラウザ・curlの両方で200を返すことまで確認済み。ここで紹介している「`.env`の自動生成」は、その検証後に手動作業を無くすため追加した変更で、次回`terraform apply`する際に動作確認する。
 
 ### RDS(PostgreSQL) — EC2上のDockerコンテナからマネージドDBへ
 
@@ -571,15 +592,7 @@ services:
     restart: unless-stopped
 ```
 
-`RDS_ENDPOINT`・`DB_PASSWORD`はcomposeファイル自体には書かず、EC2上の`.env`ファイル(Gitには含めない)から読み込む。
-
-```bash
-# EC2にSSHでログインしてから実行
-cat > ~/app/.env <<EOF
-RDS_ENDPOINT=$(terraformのoutputで表示されたrds_endpointの値)
-DB_PASSWORD=$(terraform.tfvarsに設定したdb_master_passwordの値)
-EOF
-```
+`RDS_ENDPOINT`・`DB_PASSWORD`はcomposeファイル自体には書かず、EC2上の`.env`ファイル(Gitには含めない)から読み込む。この`.env`は[6章](#6-インフラをコードで作る)の`user_data.sh`がEC2起動時に自動で作成するため、手動でSSHして作る必要はない。
 
 `restart: unless-stopped`は、EC2の再起動時にコンテナが自動で立ち上がり直すようにするための設定([6章の注意](#6-インフラをコードで作る)にある、`terraform apply`によるEC2再起動でコンテナが止まったままになる問題への対策)。
 
@@ -615,6 +628,12 @@ terraform destroy -var="my_ip_cidr=<自分のIP>/32"
 ```
 
 Terraformで作った分はこれで丸ごと消える。コンソール上の「請求ダッシュボード」で実際に費用が0円付近に戻っているかも、念のため定期的に確認する習慣をつける。
+
+> **ポイント — destroyしても、また`terraform apply`すれば同じ構成に戻せる**
+> `infra/`のコードはGitに残っているので、`terraform destroy`した後で`terraform apply`すれば、EC2・RDSとも同じ構成で作り直せる。ただし以下の点は変わる。
+> - パブリックIP・RDSのエンドポイントは毎回変わる(固定IPを使っていないため)。作り直したら`terraform output`で確認し直す
+> - RDSのデータは`skip_final_snapshot = true`のため、destroy時に完全に消える(初期データの3列以外に残したいデータが無いことを確認してからdestroyする)
+> - `.env`は[6章](#6-インフラをコードで作る)のとおりEC2起動時に自動生成されるため、以前のような手動SSH作業は不要
 
 ## 10. セキュリティの基本
 
