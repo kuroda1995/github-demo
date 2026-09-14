@@ -11,7 +11,10 @@ export function Column({ column, columns, cards, onAddCard, onUpdateCard, onDele
   const cardIds = cards.map((c) => c.id);
 
   return (
-    <section ref={setNodeRef} className={"column" + (isOver ? " drag-over" : "")}>
+    <section
+      ref={setNodeRef}
+      className={"column column-" + column.id + (isOver ? " drag-over" : "")}
+    >
       <div className="column-header">
         <span className="column-name">{column.name}</span>
         <span className="column-count">({cards.length})</span>

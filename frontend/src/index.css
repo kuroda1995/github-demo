@@ -1,7 +1,7 @@
 :root {
-  --accent: #4f6df5;
-  --accent-dark: #3a54d1;
-  --bg: #f4f5f7;
+  --accent: #6366f1;
+  --accent-dark: #4338ca;
+  --bg: #f6f6fb;
   --column-bg: #ffffff;
   --column-border: #e1e4e8;
   --card-bg: #ffffff;
@@ -15,6 +15,12 @@
   --priority-medium-text: #b0700a;
   --priority-low-bg: #e8f6ec;
   --priority-low-text: #1e8449;
+  --column-todo: #64748b;
+  --column-todo-bg: #f1f5f9;
+  --column-doing: #d97706;
+  --column-doing-bg: #fff7ed;
+  --column-done: #16a34a;
+  --column-done-bg: #f0fdf4;
 }
 
 * {
@@ -104,6 +110,7 @@ body {
   min-width: 280px;
   background: var(--column-bg);
   border: 1px solid var(--column-border);
+  border-top: 4px solid var(--column-border);
   border-radius: 8px;
   padding: 16px;
   display: flex;
@@ -115,6 +122,31 @@ body {
 .column.drag-over {
   background-color: #eef1ff;
   border-color: var(--accent);
+}
+
+/* 列ごとに進捗状況が一目でわかるよう、上部の帯とタイトルの色を変える */
+.column-todo {
+  border-top-color: var(--column-todo);
+}
+
+.column-todo .column-name {
+  color: var(--column-todo);
+}
+
+.column-doing {
+  border-top-color: var(--column-doing);
+}
+
+.column-doing .column-name {
+  color: var(--column-doing);
+}
+
+.column-done {
+  border-top-color: var(--column-done);
+}
+
+.column-done .column-name {
+  color: var(--column-done);
 }
 
 .column-header {
@@ -170,6 +202,7 @@ body {
 .card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
+  border-left: 4px solid var(--card-border);
   border-radius: 6px;
   padding: 10px 12px;
   display: flex;
@@ -178,6 +211,19 @@ body {
   gap: 8px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   cursor: grab;
+}
+
+/* カード全体の左端にも優先度の色を出し、バッジを見なくても一目でわかるようにする */
+.card-pri-high {
+  border-left-color: var(--priority-high-text);
+}
+
+.card-pri-medium {
+  border-left-color: var(--priority-medium-text);
+}
+
+.card-pri-low {
+  border-left-color: var(--priority-low-text);
 }
 
 .card.dragging {

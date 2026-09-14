@@ -110,7 +110,7 @@ export function Board() {
       </main>
       <DragOverlay>
         {activeCard ? (
-          <div className="card card-overlay">
+          <div className={"card card-overlay card-pri-" + (activeCard.priority || "medium")}>
             <div className="card-main">
               <div className="card-badges">
                 <span className={"card-priority priority-" + (activeCard.priority || "medium")}>

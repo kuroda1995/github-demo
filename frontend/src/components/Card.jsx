@@ -39,7 +39,9 @@ export function Card({ card, columns, onUpdate, onDelete }) {
     <div
       ref={setNodeRef}
       style={style}
-      className={"card" + (isDragging ? " dragging" : "")}
+      className={
+        "card card-pri-" + (card.priority || "medium") + (isDragging ? " dragging" : "")
+      }
       {...attributes}
       {...listeners}
     >
